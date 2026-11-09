@@ -1,0 +1,78 @@
+#include "AForm.hpp"
+
+Bureaucrat::Bureaucrat(void)
+{}
+
+Bureaucrat::Bureaucrat(const std::string &name, uint8_t grade) : _name(name)
+{
+	_grade = 150;
+	if (grade > 150)
+		throw GradeTooLowException();
+	if (grade <= 0)
+		throw GradeTooHighException();
+	_grade = grade;
+}
+
+Bureaucrat::Bureaucrat(const Bureaucrat &value) : _name(value.getName()), _grade(value.getGrade())
+{}
+
+Bureaucrat::~Bureaucrat(void)
+{}
+
+std::string	Bureaucrat::getName(void) const
+{
+	return (_name);
+}
+
+uint8_t	Bureaucrat::getGrade(void) const
+{
+	return (_grade);
+}
+
+void	Bureaucrat::incrementGrade(void)
+{
+	if (_grade <= 0)
+		throw GradeTooHighException();
+	_grade--;
+}
+
+void	Bureaucrat::decrementGrade(void)
+{
+	if (_grade >= 150)
+		throw GradeTooLowException(); 
+	_grade++;
+}
+
+void	Bureaucrat::signForm(AForm &value)	
+{
+	try
+	{
+		value.beSigned(*this);
+		std::cout << _name << " signed " << value.getName() << std::endl;
+	}
+	catch (std::exception &e)
+	{
+		std::cout << _name << " couldn’t sign " << value.getName() << " because <reason>."<< std::endl;
+	}
+}
+
+void	Bureaucrat::executeForm(AForm const &form)
+{
+	form.execute(*this);
+	if (form.getSign() == 0 || getGrade() > form.getGradeToExecute())
+		std::cout << _name << " can't executed " << form.getName() << std::endl;
+	else
+		std::cout << _name << " executed " << form.getName() << std::endl;
+}
+
+Bureaucrat &Bureaucrat::operator=(const Bureaucrat &value)
+{
+	(void)value;
+	return (*this);
+}
+
+std::ostream& operator<<(std::ostream& os, const Bureaucrat& dt)
+{
+    os << dt.getName() << ", bureaucrat grade" << dt.getGrade() << '.' << std::endl;
+    return os;
+}
