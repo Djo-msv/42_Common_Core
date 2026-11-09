@@ -1,0 +1,424 @@
+"use client";
+
+import { useState, useRef, useEffect } from "react";
+import { Transforms } from "slate";
+import { ReactEditor, useSelected, useFocused, useSlate, useReadOnly } from "slate-react";
+import {
+    Trash2, AlignLeft, AlignCenter, AlignRight, Image as ImageIcon,
+    Upload, Check, Pencil, Move, ArrowUp, ArrowDown
+} from "lucide-react";
+import { useTranslations } from "next-intl";
+
+const MIN_WIDTH = 120;
+const MAX_WIDTH = 900;
+const DEFAULT_WIDTH = 400;
+
+const SIZE_PRESETS = [
+    { label: "S", value: 240 },
+    { label: "M", value: 400 },
+    { label: "L", value: 600 },
+    { label: "XL", value: 900 },
+];
+
+export default function ImageElement({ attributes, children, element }: any) {
+    const t = useTranslations("Page.editor");
+    const selected = useSelected();
+    const focused = useFocused();
+    const editor = useSlate();
+
+    // 💡 1. Hook pour détecter si l'éditeur est en mode lecture seule
+    const readOnly = useReadOnly();
+
+    const savedUrl = element.url || "";
+    const alt = element.alt || "";
+    const align = element.align || "center";
+    const savedWidth = element.width || DEFAULT_WIDTH;
+
+    const [tempUrl, setTempUrl] = useState(savedUrl);
+    const [hasError, setHasError] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
+
+    // Redimensionnement
+    const [width, setWidth] = useState<number>(savedWidth);
+    const [isResizing, setIsResizing] = useState(false);
+    const isDragging = useRef(false);
+    const dragStart = useRef({ x: 0, width: savedWidth });
+    const widthRef = useRef(savedWidth);
+
+    useEffect(() => {
+        if (!isDragging.current) setWidth(savedWidth);
+    }, [savedWidth]);
+
+    const getLayoutClasses = () => {
+        switch (align) {
+            case "left":
+                return "float-left mr-4 mb-2";
+            case "right":
+                return "float-right ml-4 mb-2";
+            default:
+                return "mx-auto my-4 clear-both";
+        }
+    };
+
+    const updateElement = (fields: Partial<typeof element>) => {
+        const path = ReactEditor.findPath(editor, element);
+        Transforms.setNodes(editor, fields, { at: path });
+    };
+
+    const handleResizeMove = (e: MouseEvent) => {
+        if (!isDragging.current) return;
+        const delta = e.clientX - dragStart.current.x;
+        const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, dragStart.current.width + delta));
+        widthRef.current = next;
+        setWidth(next);
+    };
+
+    const handleResizeEnd = () => {
+        if (!isDragging.current) return;
+        isDragging.current = false;
+        setIsResizing(false);
+        document.removeEventListener("mousemove", handleResizeMove);
+        document.removeEventListener("mouseup", handleResizeEnd);
+        updateElement({ width: widthRef.current });
+    };
+
+    const handleResizeStart = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        isDragging.current = true;
+        setIsResizing(true);
+        dragStart.current = { x: e.clientX, width };
+        widthRef.current = width;
+        document.addEventListener("mousemove", handleResizeMove);
+        document.addEventListener("mouseup", handleResizeEnd);
+    };
+
+    const applyPresetWidth = (value: number) => {
+        setWidth(value);
+        updateElement({ width: value });
+    };
+
+    const deleteImage = () => {
+        const path = ReactEditor.findPath(editor, element);
+        Transforms.removeNodes(editor, { at: path });
+    };
+
+    const handleConfirmUrl = () => {
+        if (!tempUrl.trim()) return;
+        setHasError(false);
+        setIsEditing(false);
+        updateElement({ url: tempUrl.trim() });
+    };
+
+    const handleImageError = () => {
+        setHasError(true);
+        updateElement({ url: "" });
+    };
+
+    const moveUp = () => {
+        try {
+            const path = ReactEditor.findPath(editor, element);
+            const currentIndex = path[0];
+            if (currentIndex > 0) {
+                Transforms.moveNodes(editor, {
+                    at: path,
+                    to: [currentIndex - 1],
+                });
+            }
+        } catch (e) {
+            console.warn(t("cantMoveUp"), e);
+        }
+    };
+
+    const moveDown = () => {
+        try {
+            const path = ReactEditor.findPath(editor, element);
+            const currentIndex = path[0];
+            const totalChildren = editor.children.length;
+
+            if (currentIndex < totalChildren - 1) {
+                Transforms.moveNodes(editor, {
+                    at: path,
+                    to: [currentIndex + 1],
+                });
+            } else {
+                Transforms.insertNodes(
+                    editor,
+                    { type: "paragraph", children: [{ text: "" }] } as any,
+                    { at: [totalChildren] }
+                );
+                Transforms.moveNodes(editor, {
+                    at: path,
+                    to: [currentIndex + 1],
+                });
+            }
+        } catch (e) {
+            console.warn(t("cantMoveDown"), e);
+        }
+    };
+
+    // READ MODE
+    if (readOnly) {
+        if (!savedUrl || hasError) {
+            return <span {...attributes}>{children}</span>;
+        }
+
+        return (
+            <div {...attributes} contentEditable={false} className={`user-select-none ${getLayoutClasses()}`}>
+                <div style={{ width: `min(${width}px, 100%)`, maxWidth: "100%", boxSizing: "border-box" }}>
+                    <img
+                        src={savedUrl}
+                        alt={alt}
+                        className="block w-full max-w-full h-auto object-contain rounded-md"
+                    />
+                </div>
+                {/* Ne JAMAIS oublier children pour Slate ! */}
+                {children}
+            </div>
+        );
+    }
+
+    // EDIT MODE
+    return (
+        <div {...attributes} contentEditable={false} className={`user-select-none ${getLayoutClasses()}`}>
+            <div style={{ width: `min(${width}px, 100%)`, maxWidth: "100%", boxSizing: "border-box" }}>
+                {savedUrl && !hasError && !isEditing ? (
+                    /* Vue Édition : Image chargée avec contrôles */
+                    <div className={`relative group border-2 rounded-lg overflow-hidden ${selected && focused ? "border-[#800000] shadow-md" : "border-transparent"}`}>
+                        <img
+                            src={savedUrl}
+                            alt={alt}
+                            onError={handleImageError}
+                            className="block w-full max-w-full h-auto object-contain max-h-96 rounded-md pointer-events-none"
+                        />
+
+                        {/* Toolbar d'édition sur l'image */}
+                        <div className="absolute top-2 right-2 bg-white/90 backdrop-blur border rounded-lg shadow p-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                            <button type="button" onClick={moveUp} className="p-1 hover:bg-[#f7e9e2] text-[#6f4d44] rounded" title={t("moveImageUp")}>
+                                <ArrowUp size={14} />
+                            </button>
+                            <button type="button" onClick={moveDown} className="p-1 hover:bg-[#f7e9e2] text-[#6f4d44] rounded" title={t("moveImageDown")}>
+                                <ArrowDown size={14} />
+                            </button>
+                            <button type="button" onClick={() => { setTempUrl(savedUrl); setIsEditing(true); }} className="p-1 hover:bg-[#f7e9e2] text-[#6f4d44] rounded" title={t("editUrl")}>
+                                <Pencil size={14} />
+                            </button>
+
+                            <div className="w-[1px] h-4 bg-[#ead7d0] mx-0.5" />
+
+                            <button type="button" onClick={() => updateElement({ align: "left" })} className={`p-1 rounded ${align === "left" ? "bg-[#f7e9e2] text-[#800000]" : "hover:bg-[#f7e9e2] text-[#6f4d44]"}`} title={t("alignLeft")}>
+                                <AlignLeft size={14} />
+                            </button>
+                            <button type="button" onClick={() => updateElement({ align: "center" })} className={`p-1 rounded ${align === "center" ? "bg-[#f7e9e2] text-[#800000]" : "hover:bg-[#f7e9e2] text-[#6f4d44]"}`} title={t("center")}>
+                                <AlignCenter size={14} />
+                            </button>
+                            <button type="button" onClick={() => updateElement({ align: "right" })} className={`p-1 rounded ${align === "right" ? "bg-[#f7e9e2] text-[#800000]" : "hover:bg-[#f7e9e2] text-[#6f4d44]"}`} title={t("alignRight")}>
+                                <AlignRight size={14} />
+                            </button>
+
+                            <div className="w-[1px] h-4 bg-[#ead7d0] mx-0.5" />
+
+                            {SIZE_PRESETS.map((preset) => (
+                                <button
+                                    key={preset.label}
+                                    type="button"
+                                    onClick={() => applyPresetWidth(preset.value)}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${Math.abs(width - preset.value) < 10 ? "bg-[#f7e9e2] text-[#800000]" : "hover:bg-[#f7e9e2] text-[#6f4d44]"}`}
+                                    title={`${t("sizeLabel")} ${preset.label} (${preset.value}px)`}
+                                >
+                                    {preset.label}
+                                </button>
+                            ))}
+
+                            <div className="w-[1px] h-4 bg-[#ead7d0] mx-0.5" />
+
+                            <button type="button" onClick={deleteImage} className="p-1 hover:bg-red-50 text-red-500 rounded" title={t("deleteBlock")}>
+                                <Trash2 size={14} />
+                            </button>
+                        </div>
+
+                        {/* Poignée de redimensionnement */}
+                        <div
+                            onMouseDown={handleResizeStart}
+                            className="absolute bottom-1 right-1 w-4 h-4 rounded-sm bg-[#800000] border-2 border-[#fffaf7] shadow cursor-nwse-resize opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center z-20"
+                            title={t("dragToResize")}
+                        >
+                            <Move size={9} className="text-white" />
+                        </div>
+
+                        {/* Indicateur de taille */}
+                        {isResizing && (
+                            <div className="absolute bottom-1 left-1 bg-black/70 text-white text-[10px] px-1.5 py-0.5 rounded z-20">
+                                {Math.round(width)}px
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    /* Vue Édition : Formulaire de saisie d'URL */
+                    <div className={`w-full min-w-0 p-2 sm:p-4 border-2 border-dashed rounded-xl bg-[#f7e9e2] flex flex-col gap-3 ${selected && focused ? "border-[#800000] ring-2 ring-[#ead7d0]" : "border-[#d9bfb7]"}`}>
+                        <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
+                            <span className="flex items-center gap-1.5"><ImageIcon size={14} /> {isEditing ? t("editImage") : t("addImage")}</span>
+                            <button type="button" onClick={deleteImage} className="text-red-500 hover:text-red-700">{t("delete")}</button>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    placeholder={t("pasteImageUrl")}
+                                    value={tempUrl}
+                                    onChange={(e) => {
+                                        setTempUrl(e.target.value);
+                                        if (hasError) setHasError(false);
+                                    }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleConfirmUrl();
+                                        }
+                                    }}
+                                    className={`text-xs p-2 bg-[#fffaf7] border border-[#d9bfb7] rounded-lg outline-none flex-1 ${hasError ? "border-red-400 focus:border-red-500" : "focus:border-[#800000]"}`}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleConfirmUrl}
+                                    className="px-3 bg-[#800000] hover:bg-[#5f0000] text-[#fffaf7] rounded-lg text-xs font-medium flex items-center justify-center transition"
+                                >
+                                    <Check size={14} />
+                                </button>
+                            </div>
+
+                            {hasError && (
+                                <span className="text-[11px] text-red-500 font-medium pl-1">
+                                    {t("imageNotFound")}
+                                </span>
+                            )}
+                        </div>
+
+                        <input
+                            type="text"
+                            placeholder={t("altTextPlaceholder")}
+                            value={alt}
+                            onChange={(e) => updateElement({ alt: e.target.value })}
+                            className="text-xs p-2 bg-[#fffaf7] border border-[#d9bfb7] rounded-lg outline-none focus:border-[#800000]"
+                        />
+						<UploadButton
+							onUploadSuccess={(path) => {
+							updateElement( { url: path });
+						}}/>
+
+                    </div>
+                )}
+            </div>
+            {children}
+        </div>
+    );
+}
+
+export function UploadButton({ onUploadSuccess }: { onUploadSuccess: (path: string) => void }) {
+
+	const [isDragging, setIsDragging] = useState(false)
+	const [isUploading, setIsUploading] = useState(false)
+	const tCommon = useTranslations("Common")
+
+	function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
+		const file = event.target.files?.[0]
+
+		if (!file) return
+
+		uploadFile(file)
+	}
+
+	function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
+		event.preventDefault()
+		event.stopPropagation()
+
+		setIsDragging(true)
+	}
+
+	function handleDragLeave(event: React.DragEvent<HTMLDivElement>) {
+		event.preventDefault()
+		event.stopPropagation()
+
+		setIsDragging(false)
+	}
+
+	function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+		event.preventDefault()
+		event.stopPropagation()
+
+		setIsDragging(false)
+
+		const file = event.dataTransfer.files?.[0]
+
+		if (!file) return
+
+		uploadFile(file)
+	}
+
+	async function uploadFile(file: File) {
+		if (!file.type.startsWith("image/")) {
+		    alert(tCommon("selectValidImage"))
+			return
+		}
+
+		if (file.size > 10 * 1024 * 1024) {
+			alert(tCommon("imageTooLarge"))
+			return
+		}
+		try {
+			setIsUploading(true)
+			const formData = new FormData()
+			formData.append("file", file)
+
+			const response = await fetch("/api/upload", {
+				method: "POST",
+				body: formData,
+			})
+			if (!response.ok) {
+				throw new Error("Erreur lors de l'upload")
+			}
+
+			const data = await response.json()
+
+			onUploadSuccess(data.path);
+		} catch (error) {
+			console.error(error)
+			alert(tCommon("uploadImageFailed"))
+		} finally {
+			setIsUploading(false)
+		}
+	}
+
+	return (
+		<div
+			onDragOver={handleDragOver}
+			onDragLeave={handleDragLeave}
+			onDrop={handleDrop}
+		
+			className={`
+				border border-dashed rounded-lg p-3 text-center
+				transition-colors duration-200
+				${
+					isDragging
+                        ? "border-[#800000] bg-[#f7e9e2]"
+                        : "border-[#d9bfb7] bg-[#fffaf7]"
+				}
+			`}
+		>
+			<label>
+				<span className="text-[11px] text-gray-500">
+					{tCommon("dragOrBrowse")}
+				</span>
+				<br />
+				<span className="mt-1 text-[10px] text-gray-400">
+					{tCommon("acceptedFormats")}
+				</span>
+
+				<p className="text-[11px] text-gray-400 flex items-center justify-center gap-1">
+					<input type="file" accept="image/*" className="hidden" onChange={handleUpload}/> 
+				</p>
+			</label>
+		</div>
+	)
+}

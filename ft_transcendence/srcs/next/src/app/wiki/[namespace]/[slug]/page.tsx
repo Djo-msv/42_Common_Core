@@ -1,0 +1,80 @@
+import { notFound, redirect } from 'next/navigation';
+import { resolvePage } from '%/lib/page/page_resolver';
+import PageViewer from '@/components/page/PageViewer';
+
+import FooterRecommendations from "@/components/FooterRecommendations";
+import { getCurrentUser } from "@/app/lib/session";
+import { prisma } from "%/lib/prisma/prisma";
+import { canViewPage } from '@/actions/pages';
+import { canEditPage } from "@/actions/pages";
+
+type Params = {
+    params: Promise<{
+        namespace: string;
+        slug: string;
+    }>;
+};
+
+export default async function WikiViewPage({ params }: Params) {
+    const { namespace, slug } = await params;
+    const result = await resolvePage(namespace, slug);
+
+    if (!result) notFound();
+
+    const { page, redirectTo } = result;
+
+    if (redirectTo) redirect(redirectTo);
+
+    if (!page)
+        notFound();
+
+    const pageTags = await prisma.tagPage.findMany({
+        where: { pageId: page.pageId },
+        select: { tagId: true }
+    });
+
+    const hasTags = pageTags.length > 0;
+    const acceptedTagIds = new Set(pageTags.map(t => t.tagId));
+    const content = page.content as { blocks: any[] } | null;
+    const blocks = (content?.blocks ?? []).map((block: any) =>
+        block.type === 'infobox' && block.infoboxData
+            ? {
+                 ...block,
+                infoboxData: {
+                    ...block.infoboxData,
+                    tags: (block.infoboxData.tags ?? []).filter((tag: any) => acceptedTagIds.has(Number(tag.id))),
+                },
+            } : block
+    );
+
+    const user = await getCurrentUser();
+    if (!page.public)
+    {
+        console.log(user);
+        if (!user || !await canViewPage(page.pageId, user.user_id))
+            notFound();
+    }
+    const canEdit = user ? await canEditPage(page.pageId, user.user_id) : false;
+
+    return (
+        <div className="min-h-screen flex flex-col">
+            <main className="flex-grow">
+                <PageViewer
+                    accountId={user?.accountId}
+                    title={page.title}
+                    blocks={blocks}
+                    canEdit={canEdit}
+                    editHref={`/wiki/${namespace}/${slug}/edit`}
+                />
+            </main>
+
+            {user && (
+                <FooterRecommendations
+                    userId={user?.user_id}
+                    currentPageId={page.pageId}
+                    hasTags={hasTags}
+                />
+            )}
+        </div>
+    );
+}

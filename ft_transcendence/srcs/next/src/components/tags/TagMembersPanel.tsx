@@ -1,0 +1,137 @@
+"use client";
+
+import { useState, useTransition } from 'react';
+import { assignTagRole, removeTagMember } from '@/actions/tags';
+import AddMember from './AddMember';
+import { useTranslations } from 'next-intl';
+import UserAvatar from '@/components/UserAvatar';
+
+import type { TagCapabilities } from '%/lib/tag_permissions';
+
+type Role = {
+    id: number;
+    roleName: string;
+    hierarchyLevel: number;
+};
+
+export type Member = {
+    tagId: number;
+    userToken: string;
+    roleId: number;
+    user: { user_id: string; accountId: string; username: string; imgLink: string | null };
+    role: Role;
+};
+
+type Props = {
+    tagId: number;
+    members: Member[];
+    roles: Role[];
+    capabilities: TagCapabilities;
+    currentUserToken: string;
+};
+
+export default function TagMembersPanel({ tagId, members, roles, capabilities, currentUserToken }: Props) {
+    const [isPending, startTransition] = useTransition();
+    const t = useTranslations('Tags.members');
+    const [error, setError] = useState<string | null>(null);
+
+    // rôles que l'utilisateur courant peut assigner (strictement inférieurs à son rang)
+    const assignableRoles = roles.filter(r => capabilities.isOwner || r.hierarchyLevel < capabilities.rank);
+
+    function handleRoleChange(targetUserToken: string, roleId: number) {
+        setError(null);
+        startTransition(async () => {
+            try {
+                await assignTagRole(tagId, targetUserToken, roleId);
+            } catch (e: any) {
+                setError(e.message);
+            }
+        });
+    }
+
+    function handleRemove(targetUserToken: string) {
+        if (!confirm(t('removeConfirm'))) return;
+        setError(null);
+        startTransition(async () => {
+            try {
+                await removeTagMember(tagId, targetUserToken);
+            } catch (e: any) {
+                setError(e.message);
+            }
+        });
+    }
+
+    return (
+        <div>
+            {error && (
+                <div className="mb-4 rounded-md border border-[#e6b8b0] bg-[#fff1ef] p-3 text-sm text-[#a33a2b]">
+                    {error}
+                </div>
+            )}
+
+            {capabilities.canManageMembers && (
+                <div className="mb-6">
+                    <AddMember
+                        tagId={tagId}
+                        assignableRoles={assignableRoles}
+                        existingMemberTokens={members.map(m => m.userToken)}
+                    />
+                </div>
+            )}
+
+            <div className="divide-y border rounded-lg overflow-hidden">
+                {members.length === 0 && (
+                    <p className="p-4 text-sm text-[#8a6b63]">{t('noMemberYet')}</p>
+                )}
+
+                {members.map(member => {
+                    const canManageThis =
+                        capabilities.canManageMembers &&
+                        (capabilities.isOwner || capabilities.rank > member.role.hierarchyLevel);
+
+                    return (
+                        <div key={member.userToken} className="flex items-center justify-between gap-4 p-3.5 transition hover:bg-[#fffaf7]">
+                            <div className="flex items-center gap-3">
+                                <UserAvatar accountId={member.user.accountId} imgLink={member.user.imgLink} alt={member.user.username} size={32} className="h-8 w-8" />
+                                <span className="text-sm font-medium">{member.user.username}</span>
+                                {member.userToken === currentUserToken && (
+                                    <span className="text-xs text-[#a89088]">({t('you')})</span>
+                                )}
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                {canManageThis ? (
+                                    <>
+                                        <select
+                                            value={member.roleId}
+                                            disabled={isPending}
+                                            onChange={(e) => handleRoleChange(member.userToken, Number(e.target.value))}
+                                            className="rounded-md border border-[#d9bfb7] bg-[#fffaf7] px-2 py-1 text-sm outline-none focus:border-[#800000]"
+                                        >
+                                            {/* le rôle actuel doit toujours apparaître, même si non "assignable" désormais */}
+                                            {!assignableRoles.some(r => r.id === member.roleId) && (
+                                                <option value={member.roleId}>{member.role.roleName}</option>
+                                            )}
+                                            {assignableRoles.map(r => (
+                                                <option key={r.id} value={r.id}>{r.roleName}</option>
+                                            ))}
+                                        </select>
+                                        <button
+                                            onClick={() => handleRemove(member.userToken)}
+                                            disabled={isPending}
+                                            className="rounded-md px-2 py-1 text-xs font-semibold text-[#a33a2b] hover:bg-[#fff1ef]"
+                                        >
+                                            {t('remove')}
+                                        </button>
+                                    </>
+                                ) : (
+                                    <span className="text-sm text-[#8a6b63]">{member.role.roleName}</span>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
