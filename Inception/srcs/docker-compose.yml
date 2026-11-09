@@ -1,0 +1,81 @@
+services :
+  mariadb:
+    build: requirements/mariadb/.
+    ports:
+      - 3306
+    environment:
+      WORDPRESS_DB_NAME: $WORDPRESS_DB_NAME
+      MYSQL_USER: $MYSQL_USER
+    secrets:
+      - mariadb_password
+    volumes:
+      - mariadb_volume:/var/lib/mysql
+    networks:
+      - mariadb_network
+    restart: unless-stopped
+
+  wordpress:
+    build: requirements/wordpress/.
+    ports:
+      - 9000
+    environment:
+      MYSQL_USER: $MYSQL_USER
+      WORDPRESS_USER: $WORDPRESS_USER
+      WORDPRESS_USER_EMAIL: $WORDPRESS_USER_EMAIL
+      WORDPRESS_ADMIN: $WORDPRESS_ADMIN
+      WORDPRESS_ADMIN_EMAIL: $WORDPRESS_ADMIN_EMAIL
+      WORDPRESS_DB_NAME: $WORDPRESS_DB_NAME
+      SITE_NAME: $SITE_NAME
+    secrets:
+      - wordpress_user_password
+      - wordpress_admin_password
+      - wordpress_db_password
+    volumes:
+      - wordpress_volume:/var/www/html
+    networks:
+      - mariadb_network
+      - wordpress_network
+    restart: unless-stopped
+
+  nginx:
+    build: requirements/nginx/.
+    ports:
+      - 443:443
+    volumes:
+      - wordpress_volume:/var/www/html
+    networks:
+      - wordpress_network
+    depends_on:
+      - wordpress
+    restart: unless-stopped
+
+volumes:
+  mariadb_volume:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: /home/${USER}/data/mariadb
+
+  wordpress_volume:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: /home/${USER}/data/wordpress
+
+networks:
+  mariadb_network:
+    driver: bridge
+  wordpress_network:
+    driver: bridge
+
+secrets:
+  mariadb_password:
+    file: ../secrets/mariadb_password.txt
+  wordpress_user_password:
+    file: ../secrets/user_password.txt
+  wordpress_admin_password:
+    file: ../secrets/admin_password.txt
+  wordpress_db_password:
+    file: ../secrets/wordpress_db_password.txt
